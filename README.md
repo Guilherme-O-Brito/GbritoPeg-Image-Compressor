@@ -35,7 +35,7 @@ O arquivo principal é `codec.py`,  arquivo `runMe.ipynb` é um notebook prepara
 ## Exemplos
 
 ### Imagem Original
-![Imagem Original](imgs/Arara-Azul.bmp.bmp)
+![Imagem Original](imgs/Arara-Azul.bmp)
 
 ### Imagem Após Compressão (Sem Codificação Final)
 ![Imagem Comprimida](tests/arara-azul-compressed.png)
