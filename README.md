@@ -1,7 +1,7 @@
 # GbritoPeg-Image-Compressor
 # Implementação de Compressão JPEG
 
-Este repositório contém minha implementação do algoritmo de compressão JPEG, desenvolvida como parte das aulas de **Computação Gráfica e Multimídia** no **[Instituto Nacional de Telecomunicações - Inatel]** com o professor **[Marcelo Vinícius Cysneiros Aragão]**. O objetivo principal deste projeto foi aprofundar o entendimento sobre o funcionamento interno da compressão JPEG e facilitar a visualização prática do processo.
+Este repositório contém minha implementação do algoritmo de compressão JPEG, desenvolvida como parte das aulas de **Computação Gráfica e Multimídia** no **Instituto Nacional de Telecomunicações - Inatel** com o professor **Marcelo Vinícius Cysneiros Aragão**. O objetivo principal deste projeto foi aprofundar o entendimento sobre o funcionamento interno da compressão JPEG e facilitar a visualização prática do processo.
 
 ## Sobre o Projeto
 
