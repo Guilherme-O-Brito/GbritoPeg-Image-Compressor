@@ -4,6 +4,24 @@ import cv2
 import heapq
 from collections import Counter
 
+QTY = np.array([[16, 11, 10, 16, 24, 40, 51, 61],  # Tabela de qunatização da luminancia
+                [12, 12, 14, 19, 26, 58, 60, 55],
+                [14, 13, 16, 24, 40, 57, 69, 56],
+                [14, 17, 22, 29, 51, 87, 80, 62],
+                [18, 22, 37, 56, 68, 109, 103, 77],
+                [24, 35, 55, 64, 81, 104, 113, 92],
+                [49, 64, 78, 87, 103, 121, 120, 101],
+                [72, 92, 95, 98, 112, 100, 103, 99]])
+
+QTC = np.array([[17, 18, 24, 47, 99, 99, 99, 99],  # Tabela de quantização das chorminancias
+                [18, 21, 26, 66, 99, 99, 99, 99],
+                [24, 26, 56, 99, 99, 99, 99, 99],
+                [47, 66, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99]])
+
 # função que converte uma imagem para o espaço de cor YCrCb retornando sempre a imgagem obtida em um array de numpy
 def toYCrCb(image) -> np.ndarray:
     # convertendo a imagem para um np array
@@ -103,7 +121,7 @@ def upSampling(y:np.ndarray, crSub:np.ndarray, cbSub:np.ndarray, alphaSub:np.nda
     return result
 
 # realiza as transformadas nos canais da imagem e ja aplica a quantização
-def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:np.ndarray, qtc:np.ndarray):
+def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:np.ndarray, qtc:np.ndarray, ssv:int, ssh:int):
 
     # como os blocos de quantização tem tamanho fixo define-se uma constante com o tamanho do lado
     BLOCKSIZE = 8 
@@ -217,9 +235,9 @@ def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:n
     
     # gerando arvore e tabela de huffman considerando todos os blocos codificados em RLE para garantir mair eficiencia na codificação de huffman
     root, huffman_codes = generateGlobalHuffmanTable(all_blocks)
-    # codificando toda a imagem, passando primeiro os shapes codificados, apos eles a tabela de huffman,
+    # codificando toda a imagem, passando primeiro os parametros ssv e ssh codificados em binario, depois os shapes codificados, apos eles a tabela de huffman,
     # as tabelas de quantização e finalmente os blocos dos canais y, Cr, Cb e alpha codificados em huffman
-    encoded = encodeShapes(shapes) + encodeHuffmanTable(huffman_codes) + huffmanEncode(all_blocks, huffman_codes)
+    encoded = format(ssv,'08b') + format(ssh,'08b') + encodeShapes(shapes) + encodeHuffmanTable(huffman_codes) + huffmanEncode(all_blocks, huffman_codes)
 
     # calculando tamanho necessario em bits para armzaenar a imagem orinal
     img_length = originalShapes[0][0] * originalShapes[0][1] * 4 * 8
@@ -237,6 +255,12 @@ def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:n
 def deCompress(code:str):
 
     BLOCKSIZE = 8
+    # decodificando parametros usados na sub amostragem
+    ssv = int(code[:8], 2)
+    ssh = int(code[8:16], 2)
+
+    # removendo parte do codigo referente as constantes de sub amostragem
+    code = code[16:]
 
     # decodificando os shapes da imagem
     shapes, encoded_blocks = decodeShapes(code)
@@ -322,7 +346,7 @@ def deCompress(code:str):
     cbIDCT = cbIDCT + 128
     alphaIDCT = alphaIDCT + 128
 
-    return yIDCT, crIDCT, cbIDCT, alphaIDCT
+    return yIDCT, crIDCT, cbIDCT, alphaIDCT, ssv, ssh
 
 # função responsavel por gerar o vetor zigzag de um canal da imagem, o parametro desta função é um array bidmensional 
 # contendo apenas um canal da imagem como um todo
@@ -854,12 +878,10 @@ def writeFile(code:str, filename:str = 'compressed'):
         # salvando restante dos dados
         file.write(code_bytes)
 
-def readFile(filename:str = 'compressed') -> str:
-    # ajustando extensão de arquivo
-    filename = filename + '.gpeg'
+def readFile(filepath:str) -> str:
     
     # abre o arquivo
-    with open(filename, 'rb') as file:
+    with open(filepath, 'rb') as file:
         # le os 4 bytes que representam o tamanho original da string
         orignal_length = int.from_bytes(file.read(4), byteorder='big')
         # le o restante do arquivo
@@ -871,10 +893,14 @@ def readFile(filename:str = 'compressed') -> str:
     # retorna apenas a parte sem o padding se ele tiver sido necessario na escrita
     return padded_code[:orignal_length]
     
-def encode(filepath:str, qty:np.ndarray, qtc:np.ndarray, ssv:int = 2, ssh:int = 2, factor:float = 1, outputname:str = 'compressed'):
+def encode(image, qty:np.ndarray = QTY, qtc:np.ndarray = QTC, ssv:int = 2, ssh:int = 2, factor:float = 1, outputname:str = 'compressed'):
 
-    # abrindo imagem 
-    img = Image.open(filepath)
+    # verifica se a imagem fornecida foi um filepath ou uma imagem em array de numpy
+    if isinstance(image, str):
+        # abrindo imagem 
+        img = Image.open(image)
+    else:
+        img = image
 
     print('Inciando compressão!')
 
@@ -894,8 +920,35 @@ def encode(filepath:str, qty:np.ndarray, qtc:np.ndarray, ssv:int = 2, ssh:int = 
     qtc[qtc == 0] = 1
 
     # comprimindo a imagem realizando diretamente a DCT, quantização e codificação em ZIG ZAG, retorna a string codificada
-    encoded, alpha = compress(y, crSub, cbSub, alphaSub, qty, qtc)
-    writeFile(encoded)
+    encoded = compress(y, crSub, cbSub, alphaSub, qty, qtc, ssv, ssh)
+    # Escreve o arquivo comprimido
+    writeFile(encoded, outputname)
 
     print('Compressão finalizada!')
 
+    return encoded
+
+def decode(filepath:str = 'compressed.gpeg', saveFile:bool = False):
+
+    print('Iniciando descompressão!')
+    try:
+        # le o arquivo
+        encoded = readFile(filepath)
+    except:
+        encoded = filepath
+
+    # decodifica o arquivo e ja reconstroi as alterções gerados por quantização e DCT
+    y, cr, cb, alpha, ssv, ssh = deCompress(encoded)
+
+    # reconstruindo os canais que foram aplicados sub amostragem
+    decodedYCrCb = upSampling(y, cr, cb, alpha, ssv, ssh)
+
+    # voltando a imagem para o espaço de cor RGB com canal alpha
+    decoded = toRGB(decodedYCrCb)
+
+    print('Descompressão finalizada!')
+
+    if saveFile:
+        Image.fromarray(decoded).save('compressed.png')
+
+    return decoded
