@@ -3,13 +3,17 @@
 
 Este repositório contém minha implementação do algoritmo de compressão JPEG, desenvolvida como parte das aulas de **Computação Gráfica e Multimídia** no **Instituto Nacional de Telecomunicações - Inatel** com o professor **Marcelo Vinícius Cysneiros Aragão**. O objetivo principal deste projeto foi aprofundar o entendimento sobre o funcionamento interno da compressão JPEG e facilitar a visualização prática do processo.
 
+---
+
 ## Sobre o Projeto
 
-Nesta implementação, criei uma versão levemente adaptada do algoritmo JPEG. Algumas diferenças em relação à especificação original incluem:
+Nesta implementação, criei uma versão levemente adaptada do algoritmo JPEG. Alguns destaques incluem:
 
-- O canal alpha (transparência) não é descartado, sendo processado junto com os demais canais da imagem.
-- O código gera uma imagem comprimida, mas não passa pela etapa de codificação final (como Huffman ou codificação aritmética, etapa ainda em desenvolvimento). 
-  - **Atenção:** O tamanho do arquivo gerado **não deve ser usado para calcular a taxa de compressão**, pois ele inclui apenas as etapas de perdas da compressão JPEG.
+- **O canal alpha (transparência) é mantido no processo de compressão.** Ele passa pelas etapas de **DCT**, **quantização**, e **codificação**, utilizando a tabela de quantização da luminância.
+- O arquivo resultante (`compressed.gpeg`) contém o canal alpha junto com os demais canais, garantindo a preservação de transparência durante a compressão e descompressão.
+- **O processo agora está 100% funcional,** incluindo a codificação e decodificação completas. A **taxa de compressão printada no arquivo `runMe.ipynb` já pode ser considerada confiável.**
+
+---
 
 ## Etapas Implementadas
 
@@ -23,44 +27,66 @@ O projeto contempla as seguintes etapas do processo de compressão JPEG:
    - Aplica a DCT em blocos de 8x8 pixels para compactar as informações de frequência.
 4. **Quantização**:
    - Reduz a precisão dos coeficientes da DCT usando tabelas de quantização padrão.
-5. **Ordenação Zig-Zag**:
+5. **Codificação e manutenção do canal alpha**:
+   - O canal alpha é processado exatamente como o canal de luminância, utilizando a tabela de quantização de luminância.
+6. **Ordenação Zig-Zag**:
    - Percorre os blocos quantizados em uma ordem específica para agrupar os coeficientes mais significativos.
+7. **Codificação Final (RLE e Huffman)**:
+   - Após a ordenação Zig-Zag, os blocos de 8x8 pixels passam por um processo de codificação otimizado para compressão:
+     - **RLE (Run-Length Encoding) não convencional**: 
+       - Salva a quantidade de zeros consecutivos antes de um número não nulo, o tamanho em bits do número não nulo e, em seguida, o próprio número não nulo.
+       - Esse método explora a alta ocorrência de zeros após a quantização, característica dos coeficientes JPEG.
+     - **Codificação Huffman**:
+       - Gera uma tabela de símbolos baseada nos pares `(quantidade de zeros, tamanho em bits do número não nulo)` derivados do RLE.
+       - Os números não nulos são codificados diretamente em binário, enquanto os símbolos Huffman comprimem os pares.
+     - **Metadados salvos no início do arquivo**:
+       - Inclui os shapes originais da imagem e o dicionário de Huffman para decodificação. Esses dados são gravados em binário sem compressão.
+       - Antes dos blocos de imagem codificados, as tabelas de quantização (após quantização, Zig-Zag, RLE e Huffman) são inseridas de forma semelhante aos blocos.
 
-Embora o processo esteja incompleto (faltam etapas como a codificação final), já é possível observar os efeitos da compressão na qualidade da imagem, comparando a imagem original em formato BMP com a imagem resultante.
+O arquivo `runMe.ipynb` demonstra o funcionamento completo do codec, incluindo a compressão e descompressão, e exibe as imagens original e comprimida lado a lado, além dos canais de crominância Cr e Cb da imagem descomprimida.
 
-## Estrutura do Código
-
-O arquivo principal é `codec.py`,  arquivo `runMe.ipynb` é um notebook preparado com as chamadas das funções do arquivo `codec.py`, organizadas na ordem necessária para realizar a compressão e descompressão da imagem. Além disso, ele exibe as imagens original e comprimida lado a lado e mostra os canais de crominância Cr e Cb da imagem final após a descompressão, que concentra a maior parte das implementações do processo. Como tentei implementar manualmente todas as etapas possíveis, o código é extenso e detalhado.
+---
 
 ## Exemplos
 
 ### Imagem Original
 ![Imagem Original](imgs/Arara-Azul.bmp)
 
-### Imagem Após Compressão (Sem Codificação Final)
+### Imagem Após Compressão
 ![Imagem Comprimida](tests/arara-azul-compressed.png)
 
 ### Comparação Entre Original e Comprimida
 ![Comparação](tests/comparação.png)
 
-## Este projeto foi inspirado pelas aulas da disciplina e por materiais de referência disponíveis na internet.
+---
+
+## Funcionalidades Finais
+
+Com as melhorias realizadas, o codec agora oferece:
+
+1. **Manutenção do canal alpha**:
+   - Preserva a transparência original da imagem.
+2. **Taxa de compressão confiável**:
+   - A taxa printada no arquivo `runMe.ipynb` pode ser usada como referência para avaliar o desempenho do codec.
+
+---
 
 ## Funcionalidades Futuras
 
-Este projeto ainda está em desenvolvimento, e planejo adicionar várias melhorias e funcionalidades nas próximas etapas. Abaixo estão algumas delas:
+Embora o codec esteja funcional, algumas funcionalidades podem ser implementadas no futuro:
 
-### 1. Codificação do Arquivo Final
-Atualmente, o projeto não inclui a etapa de codificação final (como a codificação Huffman ou aritmética), responsável por comprimir ainda mais os dados gerados. Estou trabalhando nessa etapa para que o processo complete todas as fases especificadas no padrão JPEG.
+1. **Interface Gráfica**:
+   - Facilitará a interação do usuário, permitindo carregamento de imagens e visualização em tempo real.
+2. **Paralelização**:
+   - Melhorará o desempenho em sistemas com múltiplos núcleos.
 
-### 2. Interface Gráfica
-Pretendo criar uma interface gráfica intuitiva para facilitar a utilização do compressor, permitindo que usuários selecionem imagens, ajustem parâmetros e visualizem os resultados de maneira mais prática.
-
-### 3. Paralelização do Código
-Para melhorar a eficiência e reduzir o tempo de execução, especialmente ao processar imagens grandes, planejo implementar paralelização no código. Isso permitirá que diferentes etapas ou blocos sejam processados simultaneamente, aproveitando o desempenho de sistemas com múltiplos núcleos.
+---
 
 ## Contribuições
 
-Se você tiver sugestões ou melhorias, fique à vontade para abrir uma issue ou enviar um pull request. 
+Sugestões e melhorias são bem-vindas! Sinta-se à vontade para abrir uma issue ou enviar um pull request.
+
+---
 
 ## Licença
 

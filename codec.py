@@ -1,5 +1,8 @@
 import numpy as np
+from PIL import Image
 import cv2
+import heapq
+from collections import Counter
 
 # função que converte uma imagem para o espaço de cor YCrCb retornando sempre a imgagem obtida em um array de numpy
 def toYCrCb(image) -> np.ndarray:
@@ -87,17 +90,15 @@ def upSampling(y:np.ndarray, crSub:np.ndarray, cbSub:np.ndarray, alphaSub:np.nda
         for j in range(0, crSub.shape[1]):
             result[i*a,j*b,1] = crSub[i,j]
             result[i*a,j*b,2] = cbSub[i,j]
-            #result[i*a,j*b,3] = alphaSub[i,j]
             if(j*b)+1 < result.shape[1]:
                 for k in range(0,b):
                     result[i*a,(j*b)+k,1] = crSub[i,j]
                     result[i*a,(j*b)+k,2] = cbSub[i,j]
-                    #result[i*a,(j*b)+k,3] = alphaSub[i,j]
         if (i*a)+1 < result.shape[0]:
             for l in range(0,a):
                 result[(i*a)+l,:,1] = result[i*a,:,1]
                 result[(i*a)+l,:,2] = result[i*a,:,2]
-                #result[(i*a)+l,:,3] = result[i*a,:,3] 
+
     result[:,:,3] = alphaSub
     return result
 
@@ -110,16 +111,29 @@ def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:n
     SUAVIZACAO = 1
     # normaliza os canais subtraindo 128 de todos eles
     y = y - 128
+    alpha = alpha - 128
     cr = cr - 128
     cb = cb - 128
+
+    # lista contendo todos os blocos codificados em RLE
+    all_blocks = []
+
+    # codificando as tabelizas de quantização em RLE para que possam ser posteriormente codificadas em huffman
+    qtyRle = jpegRLEEncode(zigzagVector(qty))
+    qtcRle = jpegRLEEncode(zigzagVector(qtc))
+    all_blocks.append(qtyRle)
+    all_blocks.append(qtcRle)
 
     # verifica se o tamanho de y pode ser dividido igualmente em blocos de 8 por 8 pixel, caso não seja ajusta o shape de y adicionando linhas e colunas de 0
     yWidth, yHeight = int(np.ceil(y.shape[1] / BLOCKSIZE) * BLOCKSIZE), int(np.ceil(y.shape[0] / BLOCKSIZE) * BLOCKSIZE)
     if y.shape[1] % BLOCKSIZE == 0 and y.shape[0] % BLOCKSIZE == 0:
         yPadding = y.copy()
+        alphaPadding = alpha.copy()
     else:
         yPadding = np.zeros((yHeight,yWidth))
+        alphaPadding = np.zeros((yHeight,yWidth))
         yPadding[0:y.shape[0],0:y.shape[1]] += y
+        alphaPadding[0:alpha.shape[0],0:alpha.shape[1]] += alpha
 
     crWidth, crHeight = int(np.ceil(cr.shape[1] / BLOCKSIZE) * BLOCKSIZE), int(np.ceil(cr.shape[0] / BLOCKSIZE) * BLOCKSIZE)
     # como os canais Cr e Cb tem sempre o mesmo tamanho os dois são ajustados dentro do mesmo if
@@ -139,24 +153,37 @@ def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:n
     jBlocksC = int(crPadding.shape[1] / BLOCKSIZE) # quantidade de blocos na horizontal para Chrominancias
     iBlocksC = int(crPadding.shape[0] / BLOCKSIZE) # quantidade de blocos na vertical para Chrominancias
 
-    yDct, crDct, cbDct = np.zeros((yHeight, yWidth)), np.zeros((crHeight, crWidth)), np.zeros((crHeight, crWidth))
+    yDct, crDct, cbDct, alphaDct = np.zeros((yHeight, yWidth)), np.zeros((crHeight, crWidth)), np.zeros((crHeight, crWidth)), np.zeros((yHeight, yWidth))
 
-    yQauntized, crQuantized, cbQuantized = np.zeros((yHeight, yWidth)), np.zeros((crHeight, crWidth)), np.zeros((crHeight, crWidth))
+    yQauntized, crQuantized, cbQuantized, alphaQuantized = np.zeros((yHeight, yWidth)), np.zeros((crHeight, crWidth)), np.zeros((crHeight, crWidth)), np.zeros((yHeight, yWidth))
 
-    yZigzag, crZigzag, cbZigzag = np.zeros((yHeight * yWidth)), np.zeros((crHeight * crWidth)), np.zeros((crHeight * crWidth))
+    yZigzag, crZigzag, cbZigzag, alphaZigzag = np.zeros((yHeight * yWidth)), np.zeros((crHeight * crWidth)), np.zeros((crHeight * crWidth)), np.zeros((yHeight * yWidth))
     
-    #yRle, crRle, cbRle = np.array([]), np.array([]), np.array([])
+    yRle = []
+    crRle = []
+    cbRle = []
+    alphaRle = []
 
-    # calculando as transformadas e as arrays ja quantizadas de Y
+    # calculando as transformadas e as arrays ja quantizadas de Y e alpha
     for i in range(iBlocksY):
         for j in range(jBlocksY):
             index = (i * jBlocksY + j) * BLOCKSIZE**2
             # aplicando a transformada no bloco
             yDct[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = cv2.dct(yPadding[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE]) * SUAVIZACAO
+            alphaDct[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = cv2.dct(alphaPadding[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE]) * SUAVIZACAO
             # aplicando a quantização no bloco
             yQauntized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = np.round((yDct[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] ) / qty)
+            alphaQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = np.round((alphaDct[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] ) / qty)
             # fazendo a varredura em zigzag
             yZigzag[index:index + BLOCKSIZE**2] = zigzagVector(yQauntized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])
+            alphaZigzag[index:index + BLOCKSIZE**2] = zigzagVector(alphaQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])
+            # codificando bloco em RLE Jpeg
+            rleCode = jpegRLEEncode(yZigzag[index:index + BLOCKSIZE**2])
+            yRle.append(rleCode)
+            all_blocks.append(rleCode)
+            rleCode = jpegRLEEncode(alphaZigzag[index:index + BLOCKSIZE**2])
+            alphaRle.append(rleCode)
+            all_blocks.append(rleCode)
 
     # calculando as transformadas e as arrays ja quantizadas de Chrominancia
     for i in range(iBlocksC):
@@ -171,11 +198,14 @@ def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:n
             # fazendo a varredura em zigzag
             crZigzag[index:index + BLOCKSIZE**2] = zigzagVector(crQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])
             cbZigzag[index:index + BLOCKSIZE**2] = zigzagVector(cbQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])
+            # codificando blocos em RLE Jpeg
+            crRleCode = jpegRLEEncode(crZigzag[index:index + BLOCKSIZE**2])
+            cbRleCode = jpegRLEEncode(cbZigzag[index:index + BLOCKSIZE**2])
+            crRle.append(crRleCode)
+            cbRle.append(cbRleCode)
+            all_blocks.append(crRleCode)
+            all_blocks.append(cbRleCode)
 
-    # codificando em RLE
-    yRle = rleEncode(yZigzag)
-    crRle = rleEncode(crZigzag)
-    cbRle = rleEncode(cbZigzag)
     # salva os shapes originais dos canais para serem restaurados posteriormente na decodificação da imagem
     originalShapes = [y.shape,cr.shape,cb.shape,alpha.shape]
     paddedShapes = [(yHeight,yWidth),(crHeight,crWidth),(crHeight,crWidth)]
@@ -185,12 +215,38 @@ def compress(y:np.ndarray, cr:np.ndarray, cb:np.ndarray, alpha:np.ndarray, qty:n
         'padded':paddedShapes
     }
     
-    return yQauntized, crQuantized, cbQuantized, yRle, crRle, cbRle, alpha, shapes
+    # gerando arvore e tabela de huffman considerando todos os blocos codificados em RLE para garantir mair eficiencia na codificação de huffman
+    root, huffman_codes = generateGlobalHuffmanTable(all_blocks)
+    # codificando toda a imagem, passando primeiro os shapes codificados, apos eles a tabela de huffman,
+    # as tabelas de quantização e finalmente os blocos dos canais y, Cr, Cb e alpha codificados em huffman
+    encoded = encodeShapes(shapes) + encodeHuffmanTable(huffman_codes) + huffmanEncode(all_blocks, huffman_codes)
+
+    # calculando tamanho necessario em bits para armzaenar a imagem orinal
+    img_length = originalShapes[0][0] * originalShapes[0][1] * 4 * 8
+    # tamanho em bits do codigo gerado pela compressão
+    compressed_length = len(encoded)
+    # calculando taxa de compressão
+    compression_ratio = (1 - (compressed_length / img_length)) * 100
+    print(f'Tamanho em bits da imagem original: {img_length} bits')
+    print(f'Tamanho do codigo da imagem apos compressão: {compressed_length} bits')
+    print(f'Taxa de compressão estimada: {format(compression_ratio, '.2f')}%')
+
+    return encoded
 
 # realiza o processo inverso da função anterior, desquantiza e ja aplica a transformada inversa, retornando ja os 4 canais da imagem prontos para continuar a descompressão
-def deCompress(yCompressed:np.ndarray, crCompressed:np.ndarray, cbCompressed:np.ndarray, alphaCompressed:np.ndarray, shapes: np.ndarray, qty:np.ndarray, qtc:np.ndarray):
+def deCompress(code:str):
 
     BLOCKSIZE = 8
+
+    # decodificando os shapes da imagem
+    shapes, encoded_blocks = decodeShapes(code)
+    # decodificando tabela de huffman
+    huffman_codes, encoded_blocks = decodeHuffmanTable(encoded_blocks)
+    # decoficicando todos os blocos e as tabelas de quantização para o codigo RLE
+    rle_blocks, qty, qtc = huffmanDecode(encoded_blocks, huffman_codes)
+    # decodificando o RLE das tabelas de quantização neste ponto elas ja estão prontas para serem usadas na descompressão
+    qty = zigzagReconstruct(jpegRLEDecode(qty))
+    qtc = zigzagReconstruct(jpegRLEDecode(qtc))
 
     originalShapes = shapes['original']
     paddedShapes = shapes['padded']
@@ -202,37 +258,46 @@ def deCompress(yCompressed:np.ndarray, crCompressed:np.ndarray, cbCompressed:np.
     jBlocksC = int(paddedShapes[1][1] / BLOCKSIZE) # quantidade de blocos na horizontal para Chrominancias
     iBlocksC = int(paddedShapes[1][0] / BLOCKSIZE) # quantidade de blocos na vertical para Chrominancias
 
-    yIDCT, crIDCT, cbIDCT = np.zeros(paddedShapes[0]), np.zeros(paddedShapes[1]), np.zeros(paddedShapes[2])
+    yIDCT, crIDCT, cbIDCT, alphaIDCT = np.zeros(paddedShapes[0]), np.zeros(paddedShapes[1]), np.zeros(paddedShapes[2]), np.zeros(paddedShapes[0])
 
-    yDeQauntized, crDeQuantized, cbDeQuantized = np.zeros(paddedShapes[0]), np.zeros(paddedShapes[1]), np.zeros(paddedShapes[2])
+    yDeQauntized, crDeQuantized, cbDeQuantized, alphaDeQuantized = np.zeros(paddedShapes[0]), np.zeros(paddedShapes[1]), np.zeros(paddedShapes[2]), np.zeros(paddedShapes[0])
 
-    yReconstructed, crReconstructed, cbReconstructed = np.zeros(paddedShapes[0]), np.zeros(paddedShapes[1]), np.zeros(paddedShapes[2])
+    yReconstructed, crReconstructed, cbReconstructed, alphaReconstructed = np.zeros(paddedShapes[0]), np.zeros(paddedShapes[1]), np.zeros(paddedShapes[2]), np.zeros(paddedShapes[0])
 
-    yRLEDecoded, crRLEDecoded, cbRLEDecoded = np.array([]), np.array([]), np.array([])
+    yZigzag, crZigzag, cbZigzag, alphaZigzag = np.zeros((paddedShapes[0][1] * paddedShapes[0][0])), np.zeros((paddedShapes[1][1] * paddedShapes[1][0])), np.zeros((paddedShapes[1][1] * paddedShapes[1][0])), np.zeros((paddedShapes[0][1] * paddedShapes[0][0]))
 
-    # decodificando o RLE
-    yCompressed = rleDecode(yCompressed)
-    crCompressed = rleDecode(crCompressed)
-    cbCompressed = rleDecode(cbCompressed)
-
-    # calculando as transformadas e as arrays ja quantizadas de Y
+    # contador de blocos na lista de blocos codificados em RLE
+    block = 0
+    # calculando as transformadas e as arrays ja quantizadas de Y e alpha
     for i in range(iBlocksY):
         for j in range(jBlocksY):
             index = (i * jBlocksY + j) * BLOCKSIZE**2
+            # decodificando RLE Jpeg
+            yZigzag[index:index + BLOCKSIZE**2] = jpegRLEDecode(rle_blocks[block])
+            block += 1
+            alphaZigzag[index:index + BLOCKSIZE**2] = jpegRLEDecode(rle_blocks[block])
+            block += 1
             # reconstruindo o bloco em zigzag
-            yReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(yCompressed[index:index + BLOCKSIZE**2])
+            yReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(yZigzag[index:index + BLOCKSIZE**2])
+            alphaReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(alphaZigzag[index:index + BLOCKSIZE**2])
             # desquantizando o bloco
             yDeQauntized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = (yReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] ) * qty
+            alphaDeQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = (alphaReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] ) * qty
             # aplicando a transformada inversa
             yIDCT[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = cv2.idct(yDeQauntized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])
+            alphaIDCT[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = cv2.idct(alphaDeQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])
 
     # calculando as transformadas e as arrays ja quantizadas de Chrominancia
     for i in range(iBlocksC):
         for j in range(jBlocksC):
             index = (i * jBlocksC + j) * BLOCKSIZE**2
+            crZigzag[index:index + BLOCKSIZE**2] = jpegRLEDecode(rle_blocks[block])
+            block += 1
+            cbZigzag[index:index + BLOCKSIZE**2] = jpegRLEDecode(rle_blocks[block])
+            block += 1
             # reconstruindo o bloco em zigzag
-            crReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(crCompressed[index:index + BLOCKSIZE**2])
-            cbReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(cbCompressed[index:index + BLOCKSIZE**2])
+            crReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(crZigzag[index:index + BLOCKSIZE**2])
+            cbReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = zigzagReconstruct(cbZigzag[index:index + BLOCKSIZE**2])
             # desquantizando o bloco
             crDeQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = (crReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])  * qtc    
             cbDeQuantized[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE] = (cbReconstructed[i * BLOCKSIZE: (i * BLOCKSIZE) + BLOCKSIZE, j * BLOCKSIZE: (j * BLOCKSIZE) + BLOCKSIZE])  * qtc
@@ -244,6 +309,7 @@ def deCompress(yCompressed:np.ndarray, crCompressed:np.ndarray, cbCompressed:np.
     shape = originalShapes[0]
     if yIDCT.shape > shape:
         yIDCT = yIDCT[0:shape[0],0:shape[1]]
+        alphaIDCT = alphaIDCT[0:shape[0],0:shape[1]]
 
     # recortando os blocos para eliminar o padding inserido na compressão
     shape = originalShapes[1]
@@ -254,8 +320,9 @@ def deCompress(yCompressed:np.ndarray, crCompressed:np.ndarray, cbCompressed:np.
     yIDCT = yIDCT + 128
     crIDCT = crIDCT + 128
     cbIDCT = cbIDCT + 128
+    alphaIDCT = alphaIDCT + 128
 
-    return yIDCT, crIDCT, cbIDCT, alphaCompressed
+    return yIDCT, crIDCT, cbIDCT, alphaIDCT
 
 # função responsavel por gerar o vetor zigzag de um canal da imagem, o parametro desta função é um array bidmensional 
 # contendo apenas um canal da imagem como um todo
@@ -272,10 +339,8 @@ def zigzagVector(channel:np.ndarray):
     for i in range(zigzag.shape[0]):
         # caso ele va apenas para a direita
         if right == True and left == False and up == False and down == False:
-            #print('Direção: para direita')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             zigzag[i] = channel[y,x]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo para direita
             x += 1
             # verifica se o array original ja chegou na ultima linha
@@ -288,10 +353,8 @@ def zigzagVector(channel:np.ndarray):
             continue
         # caso ele va para uma diagonal para baixo e esquerda
         if right == False and left == True and up == False and down == True:
-            #print('Direção: para baixo e para esquerda')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             zigzag[i] = channel[y,x]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo na diagonal para baixo e esquerda
             x -= 1
             y += 1
@@ -309,10 +372,8 @@ def zigzagVector(channel:np.ndarray):
             continue
         # caso ele va para baixo
         if right == False and left == False and up == False and down == True:
-            #print('Direção: para baixo')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             zigzag[i] = channel[y,x]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo para baixo
             y += 1
             # verifica se o array original ja chegou na ultima coluna
@@ -325,10 +386,8 @@ def zigzagVector(channel:np.ndarray):
             continue
         # caso ele va para uma diagonal para cima e direita
         if right == True and left == False and up == True and down == False:
-            #print('Direção: para cima e para direita')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             zigzag[i] = channel[y,x]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo na diagonal para cima e para direita
             x += 1
             y -= 1
@@ -362,10 +421,8 @@ def zigzagReconstruct(zigzag:np.ndarray) -> np.ndarray:
     for i in range(zigzag.shape[0]):
         # caso ele va apenas para a direita
         if right == True and left == False and up == False and down == False:
-            #print('Direção: para direita')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             channel[y,x] = zigzag[i] 
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo para direita
             x += 1
             # verifica se o array original ja chegou na ultima linha
@@ -378,10 +435,8 @@ def zigzagReconstruct(zigzag:np.ndarray) -> np.ndarray:
             continue
         # caso ele va para uma diagonal para baixo e esquerda
         if right == False and left == True and up == False and down == True:
-            #print('Direção: para baixo e para esquerda')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             channel[y,x] = zigzag[i]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo na diagonal para baixo e esquerda
             x -= 1
             y += 1
@@ -399,10 +454,8 @@ def zigzagReconstruct(zigzag:np.ndarray) -> np.ndarray:
             continue
         # caso ele va para baixo
         if right == False and left == False and up == False and down == True:
-            #print('Direção: para baixo')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             channel[y,x] = zigzag[i]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo para baixo
             y += 1
             # verifica se o array original ja chegou na ultima coluna
@@ -415,10 +468,8 @@ def zigzagReconstruct(zigzag:np.ndarray) -> np.ndarray:
             continue
         # caso ele va para uma diagonal para cima e direita
         if right == True and left == False and up == True and down == False:
-            #print('Direção: para cima e para direita')
             # atribui o valor encontrado no passo da diagonal no array zigzag
             channel[y,x] = zigzag[i]
-            #print(f'ZigZag: {zigzag[i]}')
             # efetua o passo na diagonal para cima e para direita
             x += 1
             y -= 1
@@ -476,7 +527,6 @@ def rleDecode(encoded:np.ndarray) -> np.ndarray:
 
     return decoded
 
-# esta função deve receber um vetor unidimensional de inteiros gerado pelo algoritmo zigzag aplicado a um bloco de pixels
 def jpegRLEEncode(vector: np.ndarray) -> list:
 
     # lista responsavel por armazenar a codificação RLE
@@ -490,15 +540,17 @@ def jpegRLEEncode(vector: np.ndarray) -> list:
         else:
             # Quando encontra um valor não nulo, salva o par (run-length, tamanho do valor)
             # calcula o tamanho em bits necessario para armazenar o valor não nulo encontrado
-            size = int(np.floor(np.log2(abs(value))) + 1) if value != 0 else 0
+            #size = int(np.floor(np.log2(abs(value))) + 1)
+            size = int(value).bit_length() + 1
+
             encoded.append((zero_count, size))
-            encoded.append(value)
+            encoded.append(int(value))
             # Reseta a contagem de zeros
             zero_count = 0
     
     # Adiciona o símbolo EOB (End of Block) se o resto é zero
-    if zero_count > 0:
-        encoded.append((0, 0))  # EOB para indicar o fim do bloco
+    #if zero_count > 0:
+    encoded.append((0, 0))  # EOB para indicar o fim do bloco
 
     return encoded
 
@@ -520,8 +572,330 @@ def jpegRLEDecode(encoded: list) -> np.ndarray:
             decoded.extend([0] * zeros)
             # Adiciona o valor real
             value = encoded[i + 1]
+
             decoded.append(value)
 
     return np.array(decoded, dtype=int)
 
+# classes e funções relacionadas com a codificação de huffman
+class Node:
+    def __init__(self, symbol=None, frequency=None):
+        self.symbol = symbol
+        self.frequency = frequency
+        self.left = None
+        self.right = None
+    
+    def __lt__(self, other):
+        return self.frequency < other.frequency
+
+# constroi a arvore de huffman, deve receber em chars uma lista com todos os simbolos gerados por RLE e uma lista com as respectivas frequencias de cada simbolo
+def buildHuffmanTree(chars, freq):
+    # criando uma lista de prioridades
+    priority = [Node(char, f) for char, f in zip(chars, freq)]
+    heapq.heapify(priority)
+
+    # construindo arvore de huffman
+    while len(priority) > 1:
+        left_child = heapq.heappop(priority)
+        right_child = heapq.heappop(priority)
+        merged_node = Node(frequency=left_child.frequency + right_child.frequency)
+        merged_node.left = left_child
+        merged_node.right = right_child
+        heapq.heappush(priority, merged_node)
+    
+    # retorna a raiz da arvore 
+    return priority[0]
+
+# gera os codigos de huffman para a arvore inserida e retorna o dicionario para symbolos e codigos
+def generateHuffmanCodes(node:Node, code='', huffman_codes={}):
+    if node is not None:
+        if node.symbol is not None:
+            huffman_codes[node.symbol] = code
+        generateHuffmanCodes(node.left, code + '0', huffman_codes)
+        generateHuffmanCodes(node.right, code + '1', huffman_codes)
+    
+    return huffman_codes
+
+# recebe uma lista contendo cada bloco codificado em RLE blocos esses tambem representados por uma lista
+def generateGlobalHuffmanTable(rle_blocks: list):
+    # coletando todos os simbolos de todos os blocos
+    all_symbols = []
+    for block in rle_blocks:
+        for symbol in block[::2]:
+            if isinstance(symbol, tuple):
+                all_symbols.append(str(symbol))
+
+    # contabilizando frequencias e simbolos
+    frequencies = Counter(all_symbols)
+
+    # constroi a arvore de huffman e gera o dicionario com os codigos de huffman
+    root = buildHuffmanTree(list(frequencies.keys()), list(frequencies.values()))
+    huffman_codes = generateHuffmanCodes(root)
+
+    return root, huffman_codes
+
+# codifica os blocos usando a tabela de huffman e retorna uma string com caracteres apenas binario
+def huffmanEncode(rle_blocks: list, huffman_codes: dict) -> str:
+
+    code = ''
+
+    for block in rle_blocks:
+        for i in range(0, len(block), 2):
+            symbol = block[i]
+            code += f'{huffman_codes[str(symbol)]}'
+            if symbol != (0, 0):
+                value = block[i + 1]
+                if value != 0:
+                    if value > 0:
+                        code += format(value, f'0{symbol[1]}b')
+                    else: 
+                        two_complement = (1 << symbol[1]) + value
+                        code += format(two_complement, f'0{symbol[1]}b') 
+
+
+    return code
+
+# decodifica os blocos codificados em huffman deve receber uma string com caracteres apenas binarios e retorna uma lista com todos os blocos decodificados
+# e as tabelas de quantização QTY e QTC
+def huffmanDecode(code:str, huffman_codes: dict) -> tuple:
+    # invertendo as chaves com os valores do dicionario de huffman
+    huffman_inverted = {code: symbol for symbol, code in huffman_codes.items()}
+    # indice para percorrer o codigo
+    i = 0
+    # buffer para leitura de bits no codigo
+    buffer = ''
+    # listas para a reconstrução da tabela de 
+    qty, qtc = [], []
+    # listas para reconstruir o codigo RLE original
+    decoded = []
+    block = []
+    # conta quantos blocos ja foram decodificados
+    decoded_blocks = 0
+
+    while i < len(code):
+        buffer += code[i]
+        if buffer in huffman_inverted:
+            # reconstruindo uma das tuplas do codigo original
+            symbol = eval(huffman_inverted[buffer])
+            # salvando a tupla no bloco reconstruido
+            block.append(symbol)
+            # identifica se chegou ao fim do bloco
+            if symbol == (0,0):
+                if decoded_blocks == 0:
+                    qty.append(block)
+                elif decoded_blocks == 1:
+                    qtc.append(block)
+                else:
+                    decoded.append(block)
+                buffer = ''
+                block = []
+                i += 1 + symbol[1]
+                decoded_blocks += 1
+                continue
+
+            # recortando os bits do inteiro não nulo com base no tamanho indicado na tupla acima
+            num = code[i+1:(i + 1) + symbol[1]]
+            # convertendo de binario para inteiro (considerando complemento de 2 para numeros negativos)
+            # caso o numero seja negativo
+            if num[0] == '1':
+                # quantidade de bits 
+                bits = len(num)
+                # convertendo para inteiro
+                num = int(num, 2)
+                # ajustando complemento de 2
+                num = num - (1 << bits)
+            else:
+                # se for positivo apenas converte para inteiro 
+                num = int(num, 2)
+
+            # salva o valor não nulo no bloco reconstruido
+            block.append(num)
+            # limpando buffer de bits
+            buffer = ''
+            i += 1 + symbol[1]
+        else:
+            i += 1
+
+    return decoded, qty[0], qtc[0]
+
+# funções responsaveis por codificar a tabela de huffman de modo que possa ser decodificada antes de decodificar os blocos no codigo final
+def encodeHuffmanTable(huffman_table: dict) -> str:
+    encoded = ''
+    for symbol, code in huffman_table.items():
+        # Converte o símbolo (tupla) em uma string e depois para bytes
+        symbol_str = str(symbol)  # Converte a tupla em string
+        # Armazena o tamanho do símbolo como binário 
+        symbol_length = len(symbol_str)
+        symbol_length_binary = format(symbol_length, '016b')
+        # Converte cada caractere da string do símbolo para binário (8 bits por caractere)
+        symbol_binary = ''.join(format(ord(char), '08b') for char in symbol_str)
+        # Armazena o comprimento do código de Huffman em 8 bits
+        code_length = len(code)
+        code_length_binary = format(code_length, '08b')
+        # Concatena símbolo, comprimento do código e o código
+        encoded += symbol_length_binary + symbol_binary + code_length_binary + code
+    # Adiciona o marcador de fim da tabela
+    end_marker = "1111111111111111"  # 16 bits de 1
+    encoded += end_marker
+    return encoded
+
+def decodeHuffmanTable(encoded: str) -> tuple:
+    # marcador de final de tabela 16bits de 1
+    end_marker = "1111111111111111"
+    huffman_table = {}
+    offset = 0
+    while offset < len(encoded):
+        # Verifica se encontrou o marcador de fim
+        if encoded[offset:offset + 16] == end_marker:
+            offset += 16
+            break  # Fim da decodificação dos dados
+        # Lê o comprimento do símbolo (16 bits)
+        symbol_length_binary = encoded[offset:offset + 16]
+        symbol_length = int(symbol_length_binary, 2)
+        offset += 16
+        # Lê o símbolo em formato binário
+        symbol_binary = encoded[offset:offset + (symbol_length * 8)]
+        symbol_str = ''.join(chr(int(symbol_binary[i:i + 8], 2)) for i in range(0, len(symbol_binary), 8))
+        offset += symbol_length * 8
+        # Lê o comprimento do código (8 bits)
+        code_length_binary = encoded[offset:offset + 8]
+        code_length = int(code_length_binary, 2)
+        offset += 8
+        # Lê o código de Huffman
+        code = encoded[offset:offset + code_length]
+        offset += code_length
+        huffman_table[symbol_str] = code
+    return huffman_table, encoded[offset:]
+
+# funções responsaveis por codificar o dicionario que contem os shapes originais da imagem e o shape depois do padding
+# esta codificação é ligeiramente parecida com a codificação usada para codificar a tabela de huffman
+def encodeShapes(shapes: dict) -> str:
+    encoded = ''
+    for key, value in shapes.items():
+        # Serializa a chave do dicionário
+        key_length = len(key)
+        key_length_binary = format(key_length, '016b')  # 16 bits para o comprimento da chave
+        key_binary = ''.join(format(ord(char), '08b') for char in key)  # Cada caractere em 8 bits
+        encoded += key_length_binary + key_binary
+        
+        # Serializa a lista de tuplas
+        list_length = len(value)
+        list_length_binary = format(list_length, '08b')  # 8 bits para o comprimento da lista
+        encoded += list_length_binary
+        for tup in value:
+            # Cada elemento da tupla (dois inteiros) em 32 bits
+            for num in tup:
+                encoded += format(num, '032b')  # Inteiros em 32 bits
+
+    # Adiciona o marcador de fim da seção
+    end_marker = "1111111111111111"  # 16 bits de 1
+    encoded += end_marker
+    return encoded
+
+def decodeShapes(encoded: str) -> tuple:
+    # marcador de final de tabela 16bits de 1
+    end_marker = "1111111111111111"
+    decoded = {}
+    offset = 0
+    while offset < len(encoded):
+        # Verifica se encontrou o marcador de fim
+        if encoded[offset:offset + 16] == end_marker:
+            offset += 16
+            break  # Fim da decodificação dos dados
+        # Lê o comprimento da chave
+        key_length_binary = encoded[offset:offset + 16]
+        key_length = int(key_length_binary, 2)
+        offset += 16
+        # Lê a chave
+        key_binary = encoded[offset:offset + (key_length * 8)]
+        # reconstruindo a chave
+        key = ''.join(chr(int(key_binary[i:i + 8], 2)) for i in range(0, len(key_binary), 8))
+        offset += key_length * 8
+        
+        # Lê o comprimento da lista
+        list_length_binary = encoded[offset:offset + 8]
+        list_length = int(list_length_binary, 2)
+        offset += 8
+        # Lê os elementos da lista (tuplas)
+        value = []
+        for _ in range(list_length):
+            tup = []
+            for _ in range(2):  # Cada tupla tem 2 inteiros
+                num_binary = encoded[offset:offset + 32]
+                num = int(num_binary, 2)
+                tup.append(num)
+                offset += 32
+            value.append(tuple(tup))
+        decoded[key] = value
+    return decoded, encoded[offset:]
+
+# função responsavel por escrever o arquivo com o codigo da imagem comprimida
+def writeFile(code:str, filename:str = 'compressed'):
+    # ajustando extensão de arquivo
+    filename = filename + '.gpeg'
+    
+    # salva o comprimento original da string de bits
+    original_length = len(code)
+
+    # verificando se a string é um multiplo de 8 ja que o arquivo sera gravado em bytes não em bits
+    if original_length % 8 != 0:
+        # adiciona um padding de 0s a direita para poder salvar em bytes
+        padded_code = code.ljust((original_length + 7) // 8 * 8, '0')
+    else:
+        padded_code = code
+
+    # converte a string em bytes
+    code_bytes = int(padded_code, 2).to_bytes(len(padded_code) // 8, byteorder='big')
+
+    # escreve o arquivo
+    with open(filename, 'wb') as file:
+        # salvando o comprimento original no inicio com 4 bytes (permite um arquivo de ate 4gb)
+        file.write(original_length.to_bytes(4, byteorder='big'))
+        # salvando restante dos dados
+        file.write(code_bytes)
+
+def readFile(filename:str = 'compressed') -> str:
+    # ajustando extensão de arquivo
+    filename = filename + '.gpeg'
+    
+    # abre o arquivo
+    with open(filename, 'rb') as file:
+        # le os 4 bytes que representam o tamanho original da string
+        orignal_length = int.from_bytes(file.read(4), byteorder='big')
+        # le o restante do arquivo
+        read_bytes = file.read()
+
+    # convertendo os bytes para bits novamente
+    padded_code = ''.join(f'{byte:08b}' for byte in read_bytes)
+
+    # retorna apenas a parte sem o padding se ele tiver sido necessario na escrita
+    return padded_code[:orignal_length]
+    
+def encode(filepath:str, qty:np.ndarray, qtc:np.ndarray, ssv:int = 2, ssh:int = 2, factor:float = 1, outputname:str = 'compressed'):
+
+    # abrindo imagem 
+    img = Image.open(filepath)
+
+    print('Inciando compressão!')
+
+    # convertendo para o espaço de cor YCrCb
+    colorSpace = toYCrCb(img)
+
+    # constantes ssv, ssh de sub amostragem vertical e horizontal, não representão literalmente o 4:a:b
+    # quanto maior o valor mais informação descartada e pior o resultado final
+    # os valores equivalentes para 4:2:2 são ssv = 2, ssh = 1 e para 4:2:0 são ssv = 2 e ssh = 2
+    y, crSub, cbSub, alphaSub = subSampling(ssv,ssh,colorSpace)
+
+    # fator de qualidade aplicado nas tabelas de quantização, quanto maior mais qualidade e quanto menor mais compressão
+    # recomendo usar valores de 1 ate no maximo 100 (em 100 praticamente ja não a perdas)
+    qty = np.round(qty / factor)
+    qty[qty == 0] = 1
+    qtc = np.round(qtc / factor)
+    qtc[qtc == 0] = 1
+
+    # comprimindo a imagem realizando diretamente a DCT, quantização e codificação em ZIG ZAG, retorna a string codificada
+    encoded, alpha = compress(y, crSub, cbSub, alphaSub, qty, qtc)
+    writeFile(encoded)
+
+    print('Compressão finalizada!')
 
