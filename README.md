@@ -42,6 +42,7 @@ O projeto contempla as seguintes etapas do processo de compressão JPEG:
      - **Metadados salvos no início do arquivo**:
        - Inclui os shapes originais da imagem e o dicionário de Huffman para decodificação. Esses dados são gravados em binário sem compressão.
        - Antes dos blocos de imagem codificados, as tabelas de quantização (após quantização, Zig-Zag, RLE e Huffman) são inseridas de forma semelhante aos blocos.
+     - **O arquivo resultante é gravado em bytes para reduzir o consumo de memória**
 
 O arquivo `runMe.ipynb` demonstra o funcionamento completo do codec, incluindo a compressão e descompressão, e exibe as imagens original e comprimida lado a lado, além dos canais de crominância Cr e Cb da imagem descomprimida.
 
