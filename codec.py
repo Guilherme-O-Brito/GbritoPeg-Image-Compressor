@@ -380,6 +380,7 @@ def generateGlobalHuffmanTable(rle_blocks: list):
     # coletando todos os simbolos de todos os blocos
     all_symbols = []
     for block in rle_blocks:
+        # itera sobre o bloco com passo 2 pois a cada 2 posições no array temops 
         for symbol in block[::2]:
             if isinstance(symbol, tuple):
                 all_symbols.append(str(symbol))
