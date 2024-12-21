@@ -109,13 +109,15 @@ def upSampling(y:np.ndarray, crSub:np.ndarray, cbSub:np.ndarray, alphaSub:np.nda
             result[i*a,j*b,1] = crSub[i,j]
             result[i*a,j*b,2] = cbSub[i,j]
             if(j*b)+1 < result.shape[1]:
-                for k in range(0,b):
-                    result[i*a,(j*b)+k,1] = crSub[i,j]
-                    result[i*a,(j*b)+k,2] = cbSub[i,j]
+                for k in range(b):
+                    if (j * b) + k < result.shape[1]:  # Limite de colunas
+                        result[i*a,(j*b)+k,1] = crSub[i,j]
+                        result[i*a,(j*b)+k,2] = cbSub[i,j]
         if (i*a)+1 < result.shape[0]:
-            for l in range(0,a):
-                result[(i*a)+l,:,1] = result[i*a,:,1]
-                result[(i*a)+l,:,2] = result[i*a,:,2]
+            for l in range(a):
+                if (i * a) + l < result.shape[0]:  # Limite de linhas
+                    result[(i*a)+l,:,1] = result[i*a,:,1]
+                    result[(i*a)+l,:,2] = result[i*a,:,2]   
 
     result[:,:,3] = alphaSub
     return result
@@ -910,7 +912,7 @@ def encode(image, qty:np.ndarray = QTY, qtc:np.ndarray = QTC, ssv:int = 2, ssh:i
     # constantes ssv, ssh de sub amostragem vertical e horizontal, não representão literalmente o 4:a:b
     # quanto maior o valor mais informação descartada e pior o resultado final
     # os valores equivalentes para 4:2:2 são ssv = 2, ssh = 1 e para 4:2:0 são ssv = 2 e ssh = 2
-    y, crSub, cbSub, alphaSub = subSampling(ssv,ssh,colorSpace)
+    y, crSub, cbSub, alpha = subSampling(ssv,ssh,colorSpace)
 
     # fator de qualidade aplicado nas tabelas de quantização, quanto maior mais qualidade e quanto menor mais compressão
     # recomendo usar valores de 1 ate no maximo 100 (em 100 praticamente ja não a perdas)
@@ -920,7 +922,7 @@ def encode(image, qty:np.ndarray = QTY, qtc:np.ndarray = QTC, ssv:int = 2, ssh:i
     qtc[qtc == 0] = 1
 
     # comprimindo a imagem realizando diretamente a DCT, quantização e codificação em ZIG ZAG, retorna a string codificada
-    encoded = compress(y, crSub, cbSub, alphaSub, qty, qtc, ssv, ssh)
+    encoded = compress(y, crSub, cbSub, alpha, qty, qtc, ssv, ssh)
     # Escreve o arquivo comprimido
     writeFile(encoded, outputname)
 
@@ -928,7 +930,7 @@ def encode(image, qty:np.ndarray = QTY, qtc:np.ndarray = QTC, ssv:int = 2, ssh:i
 
     return encoded
 
-def decode(filepath:str = 'compressed.gpeg', saveFile:bool = False):
+def decode(filepath:str = 'compressed.gpeg', savePng:bool = False):
 
     print('Iniciando descompressão!')
     try:
@@ -939,7 +941,6 @@ def decode(filepath:str = 'compressed.gpeg', saveFile:bool = False):
 
     # decodifica o arquivo e ja reconstroi as alterções gerados por quantização e DCT
     y, cr, cb, alpha, ssv, ssh = deCompress(encoded)
-
     # reconstruindo os canais que foram aplicados sub amostragem
     decodedYCrCb = upSampling(y, cr, cb, alpha, ssv, ssh)
 
@@ -948,7 +949,7 @@ def decode(filepath:str = 'compressed.gpeg', saveFile:bool = False):
 
     print('Descompressão finalizada!')
 
-    if saveFile:
+    if savePng:
         Image.fromarray(decoded).save('compressed.png')
 
     return decoded
