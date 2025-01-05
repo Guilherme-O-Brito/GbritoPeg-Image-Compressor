@@ -87,9 +87,9 @@ Embora o codec esteja funcional, algumas funcionalidades podem ser implementadas
 
 ## 📚 Documentação Detalhada
 
-Para uma explicação mais profunda sobre o funcionamento das funções, etapas de compressão e decodificação, além de exemplos práticos de uso do codec, confira a documentação completa disponível no arquivo **`documentation.md`**.
+Para uma explicação mais profunda sobre o funcionamento das funções, etapas de compressão e decodificação, além de exemplos práticos de uso do codec, confira a documentação completa disponível no arquivo **`doc.ipynb`**.
 
-👉 [Acesse a Documentação Detalhada](documentation.md)
+👉 [Acesse a Documentação Detalhada](doc.ipynb)
 
 Nesta documentação, você encontrará:
 - Explicação passo a passo das funções principais.
