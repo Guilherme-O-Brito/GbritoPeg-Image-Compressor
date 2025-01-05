@@ -83,6 +83,25 @@ Embora o codec esteja funcional, algumas funcionalidades podem ser implementadas
 
 ---
 
+---
+
+## 📚 Documentação Detalhada
+
+Para uma explicação mais profunda sobre o funcionamento das funções, etapas de compressão e decodificação, além de exemplos práticos de uso do codec, confira a documentação completa disponível no arquivo **`documentation.md`**.
+
+👉 [Acesse a Documentação Detalhada](documentation.md)
+
+Nesta documentação, você encontrará:
+- Explicação passo a passo das funções principais.
+- Tutoriais simplificados e avançados para usar o codec.
+- Testes realizados durante o desenvolvimento.
+- Detalhes técnicos sobre cada etapa do processo.
+
+A documentação foi organizada de forma sequencial para facilitar o entendimento do fluxo de compressão e descompressão.
+
+---
+
+
 ## Contribuições
 
 Sugestões e melhorias são bem-vindas! Sinta-se à vontade para abrir uma issue ou enviar um pull request.
