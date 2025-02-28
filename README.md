@@ -69,20 +69,16 @@ Com as melhorias realizadas, o codec agora oferece:
    - Preserva a transparência original da imagem.
 2. **Taxa de compressão confiável**:
    - A taxa printada no arquivo `runMe.ipynb` pode ser usada como referência para avaliar o desempenho do codec.
+3. **Melhorias de desempenho**:  
+   - Um novo arquivo chamado `codec_mt.py` pode ser usado da mesma forma que o `codec.py`, proporcionando uma execução mais rápida devido a otimizações aplicadas em suas funções, incluindo o uso de *multithreading* e compilação de código em baixo nível com `numba`. No entanto, essas modificações tornaram o código mais complexo e difícil de entender.  
+
+   - Este código **não será documentado neste projeto**, pois o foco é o processo de compressão, e não as técnicas de otimização utilizadas no novo arquivo. Portanto, caso seu objetivo seja compreender o funcionamento da compressão e descompressão, recomendo que leia a [documentação](doc.ipynb) e utilize como referência o `codec.py`, que é o codec devidamente documentado.  
+
+   - O `codec_mt.py` deve ser utilizado apenas para acelerar a execução do processo, sendo especialmente útil para compressão de imagens grandes, que no método anterior poderiam levar vários minutos para serem processadas.
+
+   - Uma curiosidade sobre esse novo codec é que, apesar de ser bem mais otimizado na maioria dos casos, ele pode ser mais lento em imagens muito pequenas, como a imagem [Lena](imgs/lena.bmp) contida neste projeto. Isso ocorre devido às chamadas ao compilador do `numba` e ao tempo necessário para paralelizar e iniciar os processos. No entanto, para imagens grandes, a partir de *Full HD*, o `codec_mt.py` será sempre mais rápido que o `codec.py`.  
 
 ---
-
-## Funcionalidades Futuras
-
-Embora o codec esteja funcional, algumas funcionalidades podem ser implementadas no futuro:
-
-1. **Interface Gráfica**:
-   - Facilitará a interação do usuário, permitindo carregamento de imagens e visualização em tempo real.
-2. **Paralelização**:
-   - Melhorará o desempenho em sistemas com múltiplos núcleos.
-
----
-
 ---
 
 ## 📚 Documentação Detalhada
